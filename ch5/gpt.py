@@ -21,8 +21,8 @@ class GPTDatasetV1(Dataset):
 
         # Use a sliding window to chunk the book into overlapping sequences of max_length
         for i in range(0, len(token_ids) - max_length, stride):
-            input_chunk = token_ids[i:i + max_length]
-            target_chunk = token_ids[i + 1: i + max_length + 1]
+            input_chunk = token_ids[i : i + max_length]
+            target_chunk = token_ids[i + 1 : i + max_length + 1]
             self.input_ids.append(torch.tensor(input_chunk))
             self.target_ids.append(torch.tensor(target_chunk))
 
@@ -46,6 +46,17 @@ def create_dataloader(txt, batch_size=4, max_length=256, stride=128, shuffle=Tru
     return dataloader
 
 
+def create_dataloader_v1(
+    txt, batch_size=4, max_length=256, stride=128, shuffle=True, drop_last=True
+):
+    tokenizer = tiktoken.get_encoding("gpt2")
+    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
+    dataloader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last
+    )
+    return dataloader
+
+
 #####################################
 # Chapter 3
 #####################################
@@ -56,14 +67,18 @@ class MultiHeadAttention(nn.Module):
 
         self.d_out = d_out
         self.num_heads = num_heads
-        self.head_dim = d_out // num_heads  # Reduce the projection dim to match desired output dim
+        self.head_dim = (
+            d_out // num_heads
+        )  # Reduce the projection dim to match desired output dim
 
         self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out)  # Linear layer to combine head outputs
         self.dropout = nn.Dropout(dropout)
-        self.register_buffer('mask', torch.triu(torch.ones(block_size, block_size), diagonal=1))
+        self.register_buffer(
+            "mask", torch.triu(torch.ones(block_size, block_size), diagonal=1)
+        )
 
     def forward(self, x):
         b, num_tokens, d_in = x.shape
@@ -74,7 +89,7 @@ class MultiHeadAttention(nn.Module):
 
         # We implicitly split the matrix by adding a `num_heads` dimension
         # Unroll last dim: (b, num_tokens, d_out) -> (b, num_tokens, num_heads, head_dim)
-        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim) 
+        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)
         values = values.view(b, num_tokens, self.num_heads, self.head_dim)
         queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
 
@@ -92,11 +107,11 @@ class MultiHeadAttention(nn.Module):
         # Use the unsqueezed mask to fill attention scores
         attn_scores.masked_fill_(mask_unsqueezed, -torch.inf)
 
-        attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
+        attn_weights = torch.softmax(attn_scores / keys.shape[-1] ** 0.5, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
         # Shape: (b, num_tokens, num_heads, head_dim)
-        context_vec = (attn_weights @ values).transpose(1, 2) 
+        context_vec = (attn_weights @ values).transpose(1, 2)
 
         # Combine heads, where self.d_out = self.num_heads * self.head_dim
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
@@ -127,10 +142,17 @@ class GELU(nn.Module):
         super().__init__()
 
     def forward(self, x):
-        return 0.5 * x * (1 + torch.tanh(
-            torch.sqrt(torch.tensor(2.0 / torch.pi)) * 
-            (x + 0.044715 * torch.pow(x, 3))
-        ))
+        return (
+            0.5
+            * x
+            * (
+                1
+                + torch.tanh(
+                    torch.sqrt(torch.tensor(2.0 / torch.pi))
+                    * (x + 0.044715 * torch.pow(x, 3))
+                )
+            )
+        )
 
 
 class FeedForward(nn.Module):
@@ -140,7 +162,7 @@ class FeedForward(nn.Module):
             nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"]),
             GELU(),
             nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"]),
-            nn.Dropout(cfg["drop_rate"])
+            nn.Dropout(cfg["drop_rate"]),
         )
 
     def forward(self, x):
@@ -154,9 +176,10 @@ class TransformerBlock(nn.Module):
             d_in=cfg["emb_dim"],
             d_out=cfg["emb_dim"],
             block_size=cfg["context_length"],
-            num_heads=cfg["n_heads"], 
+            num_heads=cfg["n_heads"],
             dropout=cfg["drop_rate"],
-            qkv_bias=cfg["qkv_bias"])
+            qkv_bias=cfg["qkv_bias"],
+        )
         self.ff = FeedForward(cfg)
         self.norm1 = LayerNorm(cfg["emb_dim"])
         self.norm2 = LayerNorm(cfg["emb_dim"])
@@ -166,7 +189,7 @@ class TransformerBlock(nn.Module):
         # Shortcut connection for attention block
         shortcut = x
         x = self.norm1(x)
-        x = self.att(x)   # Shape [batch_size, num_tokens, emb_size]
+        x = self.att(x)  # Shape [batch_size, num_tokens, emb_size]
         x = self.drop_resid(x)
         x = x + shortcut  # Add the original input back
 
@@ -188,7 +211,8 @@ class GPTModel(nn.Module):
         self.drop_emb = nn.Dropout(cfg["drop_rate"])
 
         self.trf_blocks = nn.Sequential(
-            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
+            *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])]
+        )
 
         self.final_norm = LayerNorm(cfg["emb_dim"])
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
@@ -219,7 +243,7 @@ def generate_text_simple(model, idx, max_new_tokens, context_size):
 
         # Focus only on the last time step
         # (batch, n_token, vocab_size) becomes (batch, vocab_size)
-        logits = logits[:, -1, :]  
+        logits = logits[:, -1, :]
 
         # Get the idx of the vocab entry with the highest logits value
         idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch, 1)
@@ -234,12 +258,12 @@ if __name__ == "__main__":
 
     GPT_CONFIG_124M = {
         "vocab_size": 50257,  # Vocabulary size
-        "context_length": 1024,      # Context length
-        "emb_dim": 768,       # Embedding dimension
-        "n_heads": 12,        # Number of attention heads
-        "n_layers": 12,       # Number of layers
-        "drop_rate": 0.1,     # Dropout rate
-        "qkv_bias": False     # Query-Key-Value bias
+        "context_length": 1024,  # Context length
+        "emb_dim": 768,  # Embedding dimension
+        "n_heads": 12,  # Number of attention heads
+        "n_layers": 12,  # Number of layers
+        "drop_rate": 0.1,  # Dropout rate
+        "qkv_bias": False,  # Query-Key-Value bias
     }
 
     torch.manual_seed(123)
@@ -261,7 +285,7 @@ if __name__ == "__main__":
         model=model,
         idx=encoded_tensor,
         max_new_tokens=10,
-        context_size=GPT_CONFIG_124M["context_length"]
+        context_size=GPT_CONFIG_124M["context_length"],
     )
     decoded_text = tokenizer.decode(out.squeeze(0).tolist())
 
