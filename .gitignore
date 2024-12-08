@@ -168,3 +168,4 @@ vocab.bpe
 hparams.json
 encoder.json
 checkpoint
+gpt2
