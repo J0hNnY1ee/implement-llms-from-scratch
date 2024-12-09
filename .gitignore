@@ -169,3 +169,4 @@ hparams.json
 encoder.json
 checkpoint
 gpt2
+ch7/instruction-data.json
